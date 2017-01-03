@@ -4,11 +4,11 @@ import random
 import tensorflow as tf
 
 def read_bashdata(path='./bash_data/', min_length=2, shuffle=True, 
-                  single_out_user = -1, subsequence = False):
+                  single_out_user = -1):
     assert os.path.exists(path)    
     def splitter(data):
         split = [item.splitlines() for item in data.split('**EOF**')]
-        split = [[i for i in x if i != ''] for x in split]
+        split = [[i for i in x if i != ''] + ['**EOF**'] for x in split]
         return split
 
     sequences = []
@@ -18,10 +18,10 @@ def read_bashdata(path='./bash_data/', min_length=2, shuffle=True,
             data = f.read()
             split_data = splitter(data)
             sequences.extend(split_data)
-        if single_out_user is -1:
+        if single_out_user == -1:
             _labels = [[i]*len(x) for x in split_data]
         else:
-            _labels = [[int(i is single_out_user)]*len(x) for x in split_data]
+            _labels = [[int(i == single_out_user)+1]*len(x) for x in split_data]
         labels.extend(_labels)
             
     # create dictionary
@@ -44,8 +44,8 @@ def read_bashdata(path='./bash_data/', min_length=2, shuffle=True,
     # Filter out sequences shorter than min_length
     combined = filter(lambda x: x[2] > min_length, zip(sequences_mapped, labels, lengths))
     if single_out_user is not -1:
-        target_user = filter(lambda x: x[1], combined)
-        other_users = filter(lambda x: not x[1], combined)
+        target_user = filter(lambda x: x[1][0]==2, combined)
+        other_users = filter(lambda x: x[1][0]!=2, combined)
         subsample_other_users = random.sample(other_users, len(target_user))
         combined = target_user + subsample_other_users
     if shuffle:

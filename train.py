@@ -3,11 +3,12 @@ import datetime
 from model import SequenceClassifier
 from util import create_tfrecords, read_bashdata, make_example, parse_example
 import tensorflow as tf
+import numpy as np
 
 BATCH_SIZE = 128
-MAX_ITER = 1000
-N_EPOCHS = 10
-LEARNING_RATE = 0.01
+MAX_ITER = 100000
+N_EPOCHS = 100
+LEARNING_RATE = 0.005
 
 
 def main(save_path):
@@ -17,7 +18,7 @@ def main(save_path):
         filename = os.path.join(records_path, 'bash_data.TFRecords')
         if not os.path.isfile(filename):
             create_tfrecords(records_path=records_path, shuffle=True, 
-                             subsequence=False, single_out_user=-1)
+                             single_out_user=7, min_length=2)
         
         # Set log directory to resume from previous path                 
         if save_path:
@@ -45,11 +46,21 @@ def main(save_path):
         tokens, 
         labels, 
         length, 
-        batch_size = BATCH_SIZE,
-        n_cells = 32)
+        batch_size=BATCH_SIZE,
+        n_cells=64,
+        n_hidden=32,
+        n_stacks=1,
+        partial_classification=False,
+        embeddings=np.load('embeddings.npy'),
+        )
         
     optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
     global_step = tf.Variable(0, name='global_step', trainable=False)
+    learning_rate = tf.train.exponential_decay(LEARNING_RATE,
+                                 global_step,
+                                 200,
+                                 0.9,
+                                 staircase=True)
     train_op = optimizer.minimize(model.loss, global_step=global_step)
     
     
@@ -60,9 +71,6 @@ def main(save_path):
     coord = tf.train.Coordinator()
     
     # Summary
-    loss_summary = tf.scalar_summary('CrossEntropyLoss', model.loss)
-    acc_summary = tf.scalar_summary('Accuracy', model.acc)
-    
     merged = tf.merge_all_summaries()
     writer = tf.train.SummaryWriter(log_dir, sess.graph)
     
@@ -87,15 +95,28 @@ def main(save_path):
                 feed_dict = {
                     keep_prob: 0.5,
                     }
-                p,l,a,_ = sess.run((model.probs, model.loss, model.acc, train_op), feed_dict=feed_dict)
-                
+                lr, p,y, embeddings, l,a,_ = sess.run((
+                                    learning_rate, 
+                                    model.probs, 
+                                    model.batched_labels,
+                                    model.embeddings,
+                                    model.loss, 
+                                    model.acc, 
+                                    train_op), 
+                                    feed_dict=feed_dict)
+    
                 mer = sess.run(merged, feed_dict=feed_dict)
                 writer.add_summary(mer, step)
                 if step % 1 == 0:
-                    print 'step: %4d' % step, 'Batch Loss: %3.5f' % l, ' Batch Acc: %01.2f' % a
+                    print 'step: %4d' % step, 'Batch Loss: %3.5f' % l, ' Batch Acc: %01.2f' % a, 'LR: %0.6f' % lr
+                    
                 if step % 50 == 0:
                     saver.save(sess, os.path.join(log_dir, 'model%d.ckpt' % step))
+                    print 'saving embeddings'
+                    np.save("embeddings.npy", embeddings)
                     print 'probs:', p[0:5]
+                    print 'predictions:', np.argmax(p[0:32], axis=1)
+                    print 'actual:', y.reshape(-1)[0:32]
                 
         except KeyboardInterrupt:
             print()
