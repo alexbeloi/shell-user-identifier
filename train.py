@@ -1,33 +1,42 @@
+import argparse
 import os, sys
 import datetime
 from model import SequenceClassifier
-from util import create_tfrecords, read_bashdata, make_example, parse_example
+from util import parse_example
 import tensorflow as tf
 import numpy as np
 
 BATCH_SIZE = 128
+DATA_FILE = 'bash_data_test.TFRecords'
 MAX_ITER = 100000
 N_EPOCHS = 100
-LEARNING_RATE = 0.005
+LEARNING_RATE = 0.01
 
+def get_arguments():
+    parser = argparse.ArgumentParser(description='Bash model training script')
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE,
+                        help='How many wav files to process at once.')
+    parser.add_argument('--data_file', type=str, default=DATA_FILE,
+                        help='The TFRecords data file')
+    parser.add_argument('--restore_from', type=str, default=None,
+                        help='Directory in which to restore the model from.')
+    parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE,
+                        help='Learning rate for training.')
+    parser.add_argument('--n_labels', type=int, default=9,
+                        help='Number of labels in dataset.')            
+    return parser.parse_args()
 
-def main(save_path):
+def train(data_file, 
+          model_file=None,
+          log_dir=None, 
+          learning_rate=LEARNING_RATE, 
+          batch_size=BATCH_SIZE,
+          n_labels=10):
     with tf.name_scope('Inputs'):
-        # Create TFRecords file if doesn't exist
-        records_path = '.'
-        filename = os.path.join(records_path, 'bash_data.TFRecords')
-        if not os.path.isfile(filename):
-            create_tfrecords(records_path=records_path, shuffle=True, 
-                             single_out_user=7, min_length=2)
-        
-        # Set log directory to resume from previous path                 
-        if save_path:
-            log_dir, _ = os.path.split(save_path)
-        else:
-            log_dir = os.path.abspath('./logdir/' + str(datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")))
-            
         # Queue examples
-        filename_queue = tf.train.string_input_producer([filename]*N_EPOCHS)
+        filename_queue = tf.train.string_input_producer([data_file],
+                                                        num_epochs=N_EPOCHS, 
+                                                        capacity=batch_size*2)
         reader = tf.TFRecordReader()
         _, example = reader.read(filename_queue)
         sequence_parsed, context_parsed = parse_example(example)
@@ -36,12 +45,10 @@ def main(save_path):
         labels = sequence_parsed['labels']
         length = context_parsed['length']
         
-        
     # Session
     sess = tf.Session()
     
     # Build Model
-    keep_prob = tf.placeholder(tf.float64)
     model = SequenceClassifier(
         tokens, 
         labels, 
@@ -50,19 +57,18 @@ def main(save_path):
         n_cells=64,
         n_hidden=32,
         n_stacks=1,
+        n_labels=n_labels+1,
         partial_classification=False,
-        embeddings=np.load('embeddings.npy'),
         )
-        
-    optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
+    
     global_step = tf.Variable(0, name='global_step', trainable=False)
     learning_rate = tf.train.exponential_decay(LEARNING_RATE,
                                  global_step,
                                  200,
                                  0.9,
                                  staircase=True)
+    optimizer = tf.train.AdamOptimizer(learning_rate)
     train_op = optimizer.minimize(model.loss, global_step=global_step)
-    
     
     # Saver
     saver = tf.train.Saver()
@@ -76,9 +82,10 @@ def main(save_path):
     
     with tf.name_scope('Training'):
         try:
-            if save_path:
-                print "Restoring Model from ", save_path
-                saver.restore(sess, os.path.join('file://', os.path.abspath(save_path)))
+            if model_file:
+                print "Restoring Model from ", model_file
+                saver.restore(sess, 
+                    os.path.join('file://', os.path.abspath(model_file)))
             else:
                 print "Initializing model variables"
                 init = tf.initialize_all_variables()
@@ -92,31 +99,21 @@ def main(save_path):
             
             # Training Loop
             for step in range(start_step, MAX_ITER):
-                feed_dict = {
-                    keep_prob: 0.5,
-                    }
-                lr, p,y, embeddings, l,a,_ = sess.run((
-                                    learning_rate, 
-                                    model.probs, 
-                                    model.batched_labels,
-                                    model.embeddings,
-                                    model.loss, 
-                                    model.acc, 
-                                    train_op), 
-                                    feed_dict=feed_dict)
+                lr, l, a, _ = sess.run((learning_rate, 
+                                        model.loss, 
+                                        model.acc, 
+                                        train_op))
     
-                mer = sess.run(merged, feed_dict=feed_dict)
+                mer = sess.run(merged)
                 writer.add_summary(mer, step)
                 if step % 1 == 0:
-                    print 'step: %4d' % step, 'Batch Loss: %3.5f' % l, ' Batch Acc: %01.2f' % a, 'LR: %0.6f' % lr
+                    print 'step: %4d' % step, 
+                          'Batch Loss: %3.5f' % l, 
+                          'Batch Acc: %01.2f' % a, 
+                          'LR: %0.6f' % lr
                     
                 if step % 50 == 0:
                     saver.save(sess, os.path.join(log_dir, 'model%d.ckpt' % step))
-                    print 'saving embeddings'
-                    np.save("embeddings.npy", embeddings)
-                    print 'probs:', p[0:5]
-                    print 'predictions:', np.argmax(p[0:32], axis=1)
-                    print 'actual:', y.reshape(-1)[0:32]
                 
         except KeyboardInterrupt:
             print()
@@ -124,9 +121,24 @@ def main(save_path):
             saver.save(sess, os.path.join(log_dir, 'model%d.ckpt' % step))
             coord.request_stop()
     
+def main():
+    args = get_arguments()
     
+    data_file = os.path.normpath(args.data_file)
+    if args.restore_from:
+        log_dir, _ = os.path.split(args.restore_from)
+        model_file = os.path.normpath(args.restore_from)
+    else:
+        log_dir = os.path.abspath('./logdir/' + \
+            str(datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")))
+        model_file = None
+    
+    train(data_file,
+          model_file,
+          log_dir, 
+          args.learning_rate, 
+          args.batch_size,
+          args.n_labels)
+
 if __name__ == '__main__':
-    save_path = None
-    if len(sys.argv) > 1:
-        save_path = sys.argv[1]
-    main(save_path)
+    main()

@@ -2,6 +2,7 @@ import os
 import itertools
 import random
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
 
 def read_bashdata(path='./bash_data/', min_length=2, shuffle=True, 
                   single_out_user = -1):
@@ -52,8 +53,6 @@ def read_bashdata(path='./bash_data/', min_length=2, shuffle=True,
         random.shuffle(combined)
     inputs, labels, lengths = zip(*combined)
     
-    print len(inputs), len(labels), len(lengths)
-    
     return inputs, labels, lengths
     
 def make_example(sequence, labels):
@@ -87,14 +86,22 @@ def parse_example(ex):
     )
     return sequence_parsed, context_parsed
     
-def create_tfrecords(records_path='.', **kwargs):
-    assert os.path.exists(records_path)
-    save_path = os.path.join(records_path, 'bash_data.TFRecords')
-    
+def create_tfrecords(save_path='.', test_size=0.2, **kwargs):
+    assert os.path.exists(save_path)
     sequences, label_sequences, _ = read_bashdata(**kwargs)
-    with open(save_path, 'w') as fp:
-        writer = tf.python_io.TFRecordWriter(fp.name)
-    for sequence, label_sequence in zip(sequences, label_sequences):
-        ex = make_example(sequence, label_sequence)
-        writer.write(ex.SerializeToString())
-    writer.close()
+    x_train, x_test, y_train, y_test = \
+        train_test_split(sequences, label_sequences, test_size=test_size, random_state=1)
+    
+    def write_examples(x, y, filename):
+        file_path = os.path.join(save_path, filename)
+        with open(file_path, 'w') as fp:
+            writer = tf.python_io.TFRecordWriter(fp.name)
+        for sequence, label_sequence in zip(x, y):
+            ex = make_example(sequence, label_sequence)
+            writer.write(ex.SerializeToString())
+        writer.close()
+        
+    write_examples(x_train, y_train, 'bash_data_train.TFRecords')
+    write_examples(x_test, y_test, 'bash_data_test.TFRecords')
+    
+    
