@@ -4,7 +4,7 @@ from model import SequenceClassifier
 from util import parse_example
 import tensorflow as tf
 
-BATCH_SIZE = 1
+BATCH_SIZE = 128
 DATA_FILE = 'bash_data_test.TFRecords'
 
 def get_arguments():
@@ -14,10 +14,13 @@ def get_arguments():
     parser.add_argument('--model_file', type=str, default=None,
                         help='Checkpoint for the model you wish to test')
     parser.add_argument('--n_labels', type=int, default=9,
-                        help='Number of labels in dataset.')            
+                        help='Number of labels in dataset.')   
+    parser.add_argument('--min_length', type=int, default=2,
+                        help='Train against (sub)sequences with '
+                        'length >min_length')          
     return parser.parse_args()
     
-def test(data_file, model_file, n_labels):
+def test(data_file, model_file, n_labels, min_length):
     with tf.name_scope('Inputs'):
         # Queue examples
         filename_queue = tf.train.string_input_producer([data_file], num_epochs=1, capacity=256)
@@ -42,7 +45,8 @@ def test(data_file, model_file, n_labels):
         n_hidden=32,
         n_stacks=1,
         n_labels=n_labels+1,
-        partial_classification=False,
+        partial_classification=True,
+        min_length=min_length,
         )
         
     # Saver
@@ -81,7 +85,7 @@ def test(data_file, model_file, n_labels):
 def main():
     args = get_arguments()
     
-    test(args.data_file, args.model_file, args.n_labels)
+    test(args.data_file, args.model_file, args.n_labels, args.min_length)
     
 if __name__ == '__main__':
     main()

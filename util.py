@@ -6,18 +6,14 @@ from sklearn.model_selection import train_test_split
 
 def read_bashdata(path='./bash_data/', min_length=2, shuffle=True, 
                   single_out_user = -1):
-    assert os.path.exists(path)    
-    def splitter(data):
-        split = [item.splitlines() for item in data.split('**EOF**')]
-        split = [[i for i in x if i != ''] + ['**EOF**'] for x in split]
-        return split
-
     sequences = []
     labels = []
     for i in range(1,10):
         with open(os.path.join(path,'user%d' % (i-1))) as f:
             data = f.read()
-            split_data = splitter(data)
+            split_data = [item.splitlines() for item in data.split('**EOF**')]
+            split_data = \
+                [[j for j in x if i != ''] + ['**EOF**'] for x in split_data]
             sequences.extend(split_data)
         if single_out_user == -1:
             _labels = [[i]*len(x) for x in split_data]
@@ -27,10 +23,11 @@ def read_bashdata(path='./bash_data/', min_length=2, shuffle=True,
             
     # create dictionary
     dic = {}
-    c = 1
-    for s in set(itertools.chain.from_iterable(sequences)):
-        dic[s] = c
-        c += 1
+    index = 1
+    for s in itertools.chain.from_iterable(sequences):
+        if s not in dic:
+            dic[s] = index
+            index += 1
 
     # map the strings to ints
     sequences_mapped = [map(dic.get, item) for item in sequences]
@@ -43,7 +40,7 @@ def read_bashdata(path='./bash_data/', min_length=2, shuffle=True,
         zip(sequences_mapped, labels, lengths)))
 
     # Filter out sequences shorter than min_length
-    combined = filter(lambda x: x[2] > min_length, zip(sequences_mapped, labels, lengths))
+    combined = zip(sequences_mapped, labels, lengths)
     if single_out_user is not -1:
         target_user = filter(lambda x: x[1][0]==2, combined)
         other_users = filter(lambda x: x[1][0]!=2, combined)
@@ -86,11 +83,17 @@ def parse_example(ex):
     )
     return sequence_parsed, context_parsed
     
-def create_tfrecords(save_path='.', test_size=0.2, **kwargs):
+def create_tfrecords(save_path='.', 
+                     prefix='bash_data', 
+                     test_size=0.2, 
+                     **kwargs):
     assert os.path.exists(save_path)
     sequences, label_sequences, _ = read_bashdata(**kwargs)
     x_train, x_test, y_train, y_test = \
-        train_test_split(sequences, label_sequences, test_size=test_size, random_state=1)
+        train_test_split(sequences, 
+                         label_sequences, 
+                         test_size=test_size, 
+                         random_state=1)
     
     def write_examples(x, y, filename):
         file_path = os.path.join(save_path, filename)
@@ -101,7 +104,7 @@ def create_tfrecords(save_path='.', test_size=0.2, **kwargs):
             writer.write(ex.SerializeToString())
         writer.close()
         
-    write_examples(x_train, y_train, 'bash_data_train.TFRecords')
-    write_examples(x_test, y_test, 'bash_data_test.TFRecords')
+    write_examples(x_train, y_train, prefix + '_train.TFRecords')
+    write_examples(x_test, y_test, prefix + '_test.TFRecords')
     
     

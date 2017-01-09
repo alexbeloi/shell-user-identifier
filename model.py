@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 
-VOCABULARY_SIZE = 2358 + 1
+VOCABULARY_SIZE = 2359 + 1
 EMBEDDING_SIZE = 32
 
 class SequenceClassifier():
@@ -16,6 +16,8 @@ class SequenceClassifier():
             n_hidden=32,
             n_labels=10,
             partial_classification=True,
+            min_length=2,
+            l2_reg=0.01,
             ):
         
         b_tokens, b_labels, b_lengths = \
@@ -34,8 +36,16 @@ class SequenceClassifier():
                                     b_labels,
                                     b_lengths,
                                     partial_classification,
+                                    min_length,
                                     )
-        self.acc = self.build_accuracy(probs, b_labels, b_lengths, partial_classification)
+                                    
+        self.loss = self.loss + l2_reg*self.regularization_loss()
+        self.acc = self.build_accuracy(probs, 
+                                       b_labels, 
+                                       b_lengths, 
+                                       partial_classification,
+                                       min_length,
+                                       )
         
     def batch(self, inputs, labels, length, batch_size = 128):
         with tf.variable_scope('Batching'):
@@ -44,6 +54,7 @@ class SequenceClassifier():
                 batch_size=batch_size,
                 dynamic_pad=True,
                 name='batch',
+                capacity=2*batch_size,
                 allow_smaller_final_batch=True,
             )
         return batched_tokens, batched_labels, batched_lengths
@@ -94,14 +105,18 @@ class SequenceClassifier():
             
         return logits_flat, probs_flat
         
-    def build_loss(self, logits_flat, labels, lengths, partial_classification=True):
+    def build_loss(self, logits_flat, labels, lengths, partial_classification=True, min_length=2):
         with tf.variable_scope('Loss'):
             if not partial_classification:
                 # Mask everthing except the last output for each sequence
                 mask = tf.one_hot(lengths-1, tf.to_int32(tf.reduce_max(lengths)), axis=-1, dtype=tf.int64)
             else:
+                max_length = tf.to_int32(tf.reduce_max(lengths))
+                zeros = tf.zeros([min_length])
+                ones = tf.ones([max_length - min_length])
+                min_mask = tf.to_int64(tf.concat(0, [zeros, ones]))
                 # Only mask away padding
-                mask = tf.sign(labels)
+                mask = tf.sign(labels) * min_mask
                 
             labels_flat = tf.reshape(labels, [-1])
             losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -113,20 +128,24 @@ class SequenceClassifier():
                 
             loss_by_example = tf.reduce_sum(masked_losses, reduction_indices=1)
             if partial_classification:
-                loss_by_example = loss_by_example / tf.to_double(lengths)
+                loss_by_example = loss_by_example / tf.to_double(lengths-min_length)
             mean_loss = tf.reduce_mean(loss_by_example)
             
             loss_summary = tf.scalar_summary('CrossEntropyLoss', mean_loss)
         return mean_loss
             
-    def build_accuracy(self, probs_flat, labels, lengths, partial_classification=True):
+    def build_accuracy(self, probs_flat, labels, lengths, partial_classification=True, min_length=2):
         with tf.variable_scope('Accuracy'):
             if not partial_classification:
                 # Mask everthing except the last output for each sequence
                 mask = tf.one_hot(lengths-1, tf.to_int32(tf.reduce_max(lengths)), axis=-1, dtype=tf.int64)
             else:
+                max_length = tf.to_int32(tf.reduce_max(lengths))
+                zeros = tf.zeros([min_length])
+                ones = tf.ones([max_length - min_length])
+                min_mask = tf.to_int64(tf.concat(0, [zeros, ones]))
                 # Only mask away padding
-                mask = tf.sign(labels)
+                mask = tf.sign(labels) * min_mask
                 
             labels_flat = tf.reshape(labels, [-1])
             correct = tf.equal(tf.argmax(probs_flat, 1), labels_flat)
@@ -137,9 +156,12 @@ class SequenceClassifier():
             
             correct_reduced = tf.reduce_sum(masked_correct, reduction_indices=1) 
             if partial_classification:
-                correct_reduced = correct_reduced / tf.to_double(lengths)
+                correct_reduced = correct_reduced / tf.to_double(lengths-min_length)
             accuracy = tf.reduce_mean(tf.to_double(correct_reduced), name='accuracy')
             
             acc_summary = tf.scalar_summary('Accuracy', accuracy)
         return accuracy
+        
+    def regularization_loss(self):
+        return sum([tf.nn.l2_loss(w) for w in tf.trainable_variables()])
         

@@ -21,11 +21,14 @@ def get_arguments():
                         '(not equals single_out_user)')
     parser.add_argument('--test_size', type=float, default=0.2,
                         help='Ratio of test set to total dataset')
+    parser.add_argument('--prefix', type=str, default='bash_data',
+                        help='Prefix to add to tfrecords files generated')
     return parser.parse_args()
 
 def main():
     args = get_arguments()
-    create_tfrecords(save_path=args.save_path, 
+    create_tfrecords(save_path=args.save_path,
+                     prefix=args.prefix,
                      shuffle=args.shuffle, 
                      single_out_user=args.single_out_user, 
                      min_length=args.min_length,
