@@ -4,7 +4,7 @@ from model import SequenceClassifier
 from util import parse_example
 import tensorflow as tf
 
-BATCH_SIZE = 128
+BATCH_SIZE = 1
 DATA_FILE = 'bash_data_test.TFRecords'
 
 def get_arguments():
